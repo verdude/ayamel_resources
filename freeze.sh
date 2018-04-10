@@ -1,4 +1,4 @@
 #!/bin/bash
 
-pip3 freeze | grep pkg-resources > requirements.txt
+pip3 freeze | grep -v pkg-resources > requirements.txt
 
