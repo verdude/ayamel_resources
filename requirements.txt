@@ -1,4 +1,5 @@
 backcall==0.1.0
+beautifulsoup4==4.6.0
 bleach==2.1.3
 certifi==2018.1.18
 chardet==3.0.4
