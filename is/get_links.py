@@ -35,29 +35,42 @@ def get_brightcove_dl_links(video_ids, EMAIL, PASSWORD, account_id, token, offse
     if len(video_ids) == 0:
         logging.error("No video_ids provided")
         sys.exit(1)
-    base_url = "https://cms.api.brightcove.com/v1/accounts/%s/videos/%s/sources"
+    base_url = "https://cms.api.brightcove.com/v1/accounts/%s/videos/%s"
+    sources_url = base_url + "/sources"
     token = token.strip().split(" ")[-1]
     headers = {"Authorization": "Bearer %s" % token}
     dl_links = []
     for i,video_id in enumerate(video_ids):
-        response = requests.get(base_url % (account_id, video_id), headers=headers)
+        info_response = requests.get(base_url % (account_id, video_id), headers=headers)
 
-        if response.status_code != 302 and response.status_code != 200:
-            logging.info("Response returned %i" % response.status_code)
-            js = json.loads(response.text)
+        if info_response.status_code != 302 and info_response.status_code != 200:
+            logging.info("info_reponse returned %i" % info_response.status_code)
+            js = json.loads(info_response.text)
             if "error_code" in js[0] and js[0]["error_code"] == "UNAUTHORIZED":
                 print("Token Expired on: %s" % video_id)
                 wrap_up(False, video_id, i)
                 return dl_links
         else:
-            sources = json.loads(response.text)
+            original_filename = json.loads(info_response.text)["original_filename"]
+
+        sources_response = requests.get(sources_url % (account_id, video_id), headers=headers)
+
+        if sources_response.status_code != 302 and sources_response.status_code != 200:
+            logging.info("sources_response returned %i" % sources_response.status_code)
+            js = json.loads(sources_response.text)
+            if "error_code" in js[0] and js[0]["error_code"] == "UNAUTHORIZED":
+                print("Token Expired on: %s" % video_id)
+                wrap_up(False, video_id, i)
+                return dl_links
+        else:
+            sources = json.loads(sources_response.text)
             sources = list(filter(lambda x: x["container"] == "MP4", sources))
             if len(sources) == 0:
                 logging.info("No MP4 Sources for %s" % video_id)
-                logging.debug(response.text)
+                logging.debug(sources_response.text)
                 continue
             source = max(sources, key=lambda x:x["width"])
-            dl_links.append(source["src"] + "\n")
+            dl_links.append(source["src"] + "::" + original_filename + "\n")
             logging.debug("Source: %s" % str(source))
             logging.info("Got URL for %s" % video_id)
 
@@ -69,7 +82,7 @@ def get_brightcove_email_password():
     PASSWORD = getpass.getpass(prompt="Enter Brightcove Password: ")
     return (EMAIL, PASSWORD)
 
-def download_videos(offset):
+def run(offset):
     with open("creds.txt", "r") as creds:
         js = json.load(creds)
         email = js["email"]
@@ -80,7 +93,7 @@ def download_videos(offset):
     links = get_links()
     bc_dl_links = get_brightcove_dl_links(bc_video_ids(links), email, password, account_id, token, offset)
     if offset > 0:
-        write_mode = "w+"
+        write_mode = "a"
     else:
         write_mode = "w"
     with open(BC_LINKS, write_mode) as bcdl:
@@ -104,8 +117,8 @@ def config_logging(args):
     logging.getLogger("requests").setLevel(logging.WARNING)
     logging.basicConfig(level=lg_level)
 
-
-args = parse_options()
-config_logging(args)
-download_videos(args.offset if args.offset else 0)
+if __name__ == "__main__":
+    args = parse_options()
+    config_logging(args)
+    run(args.offset if args.offset else 0)
 
