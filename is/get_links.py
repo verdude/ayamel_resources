@@ -100,7 +100,7 @@ def run(offset):
         bcdl.writelines(bc_dl_links)
 
 def parse_options():
-    parser = argparse.ArgumentParser(prog="updates", description="Send Text", add_help=True)
+    parser = argparse.ArgumentParser(prog="get_links", description="Get Links", add_help=True)
 
     parser.add_argument("-o", "--offset", action="store", type=int, help="Start at the given Resource number")
     parser.add_argument("-d", "--debug", action="store_true", help="set logging to debug")
