@@ -97,13 +97,7 @@ class ResLibMetaDl():
                         print("Failed on %i", i)
                         return
                     ext = dl.split(".")[-1]
-                    if type(rel["attributes"]) == list:
-                        kind = ext
-                    elif type(rel["attributes"]) == dict:
-                        kind = rel["attributes"]["kind"]
-                    else:
-                        kind = "Unknown"
-                    rels.append("%s::%s_%s.%s" % (dl, kind, obj["title"], ext))
+                    rels.append("%s::%s_%s.%s" % (dl, obj["title"], sub["title"], ext))
                     break
         return rels
             
