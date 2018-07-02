@@ -1,19 +1,26 @@
 import requests
 import json
 import sys
+import logging
+from resourcedl import RLreq
 
 def get_download_uri(json_obj):
     try:
         content = json_obj["content"]
         return content["files"][0]["downloadUri"].strip()
     except Exception as e:
-        print("Error getting downloadUri for resource %s" % str(json_obj))
+        logging.error("Error getting downloadUri for resource %s" % str(json_obj))
         return None
 
+def get_key(filename=None):
+    with open("creds.txt" if not filename else filename, "r") as creds:
+        js = json.load(creds)
+    k = js["resourcelibrarykey"]
+    if k == "":
+        logging.error("Resource Library key is empty.")
+    return k
+
 class ResLibMetaDl():
-    # static vars
-    relationurl = "http://api.ayamel.org/api/v1/relations?_format=json&id="
-    resourceurl = "http://api.ayamel.org/api/v1/resources?_format=json&id="
 
     def __init__(self, get_resources=False, get_relations=False,
             resIds=[], read_file=None, write=False, threaded=False, num_threads=0):
@@ -24,12 +31,15 @@ class ResLibMetaDl():
         self.relations = []
         self.relation_resources = []
         self.resIds = []
+        self.key = get_key()
+        self.rlr = RLreq(self.key)
 
         if read_file is not None:
             with open(read_file, "r") as r:
-                self.resIds = r.readlines();
+                # get unique list of resources from file
+                self.resIds = list(set([res.strip() for res in r.readlines()]))
         else:
-            print("We need the resource file ")
+            logging.error("We need the resource file ")
             return
         if get_resources:
             self.get_resources()
@@ -41,36 +51,28 @@ class ResLibMetaDl():
 
     def get_resources(self):
         if len(self.resIds) == 0:
-            print("Need resourceIDs first")
+            logging.error("Need resourceIDs first")
             return
         for i in range(0,len(self.resIds),20):
             self.download_resources(self.resIds[i:20])
 
     def get_relations(self):
         if len(self.resIds) == 0:
-            print("Need resourceIDs first")
+            logging.error("Need resourceIDs first")
             return
         for i in range(0,len(self.resIds),20):
             self.download_relations(self.resIds[i:20])
 
-    def download_resources(self, resIds):
-        data = self.send_request(resIds)
-        resources = self.getResources(data)
-        self.resources.extend(resources)
-
-    def download_relations(self, resIds):
-        # download the relation
-        response_data = self.send_request(resIds, False)
-        relations = self.getRelations(response_data)
-        self.relations.extend(relations)
-        # filter out duplicates in the list of dictionaries
-        self.relations = list({v["id"]:v for v in self.relations}.values())
-        # download the resource that corresponds to the relation
-        # TODO: add filters on rel["type"] = transcript_of | ...
-        relation_resource_ids = [rel["subjectId"] for rel in relations]
-        response_data = self.send_request(relation_resource_ids)
-        relation_resources = self.getResources(response_data)
-        self.relation_resources.extend(relation_resources)
+    def dump_request(self, reqid, recvid, recv):
+        logging.error("Recieved incorrect amount of resources.")
+        with open("req_id_dump.txt", "w") as req_d:
+            req_d.writelines("\n".join(reqid))
+        with open("recv_id_dump.txt", "w") as recv_d:
+            recv_d.writelines("\n".join(list(recvid)))
+        with open("recv_data_dump.txt", "w") as data_d:
+            data_d.write(json.dumps(recv))
+        logging.info("Wrote dump files.")
+        sys.exit(1)
 
     def change_relation_names(self):
         # this function looks throught the relations that already have been downloaded
@@ -82,28 +84,36 @@ class ResLibMetaDl():
             self.get_relations()
         if diff != 0:
             diff = "more" if diff > 0 else "less"
-            print("There are %s relations than there are relation_resources!" % diff)
+            logging.warning("There are %s relations than there are relation_resources!" % diff)
             return
         rels = []
-        for i,rel in enumerate(self.relations):
+        for rel in self.relations:
+            res = None
+            ext = None
             for obj in self.resources:
                 if obj["id"] == rel["objectId"]:
                     res = obj
                     break
             for sub in self.relation_resources:
                 if sub["id"] == rel["subjectId"]:
+                    if res is None:
+                        logging.error("Resource not found for %s" % rel["objectId"])
+                        logging.debug(sub)
+                        logging.debug(rel)
+                        logging.debug(self.relations.index(rel))
+                        return
                     dl = get_download_uri(sub)
                     if dl is None:
-                        print("Failed on %i", i)
+                        logging.error("Failed on %i", i)
                         return
                     ext = dl.split(".")[-1]
-                    rels.append("%s::%s_%s.%s" % (dl, obj["title"], sub["title"], ext))
+                    rels.append("%s::%s_%s.%s" % (dl, res["title"], sub["title"], ext))
                     break
         return rels
             
     def write_relation_urls(self):
         if len(self.relation_resources) == 0:
-            print("No Relation resources found. Not writing urls to file...")
+            logging.error("No Relation resources found. Not writing urls to file...")
             return
         downloadUris = [get_download_uri(r) for r in self.relation_resources]
         with open("document_urls.txt", "w") as docs:
@@ -111,18 +121,6 @@ class ResLibMetaDl():
 
     def download_relation_documents(self):
         downloadUris = [get_download_uri(r) for r in self.relation_resources]
-
-
-    def send_request(self, resIds, get_res=True):
-        base_url = ResLibMetaDl.resourceurl if get_res else ResLibMetaDl.relationurl
-        url = self.format_url(resIds, base_url)
-        response = requests.get(url)
-        return json.loads(response.text)
-
-    def format_url(self, rids, base):
-        #insert ids separated by commas
-        resources = ",".join([r.strip() for r in rids])
-        return base + resources
 
     def isYoutubeLink(self, url):
         return url.startswith("https://www.youtube.com") or url.startswith("https://youtu.be")
@@ -146,14 +144,16 @@ class ResLibMetaDl():
         with open("brightcove.txt", "w") as bc:
             with open("other.txt", "w") as other:
                 with open("youtube.txt", "w") as youtube:
-                    for x in RESOURCES:
+                    for x in self.resources:
+                        if "content" not in x:
+                            continue
                         files = x["content"]["files"][0]
                         if "mime" not in files:
-                            print("Error: %s" % str(x))
+                            logging.error("%s" % str(x))
                             continue
 
-                        if not isVideo(files):
-                            print("Not a video: [%s]" % files["mime"])
+                        if not self.isVideo(files):
+                            logging.error("Not a video: [%s]" % files["mime"])
                             continue
 
                         url = ""
@@ -161,11 +161,11 @@ class ResLibMetaDl():
                             url = files["downloadUri"]
                         if "streamUri" in files:
                             if url != "":
-                                print("Overwriting url %s " % url)
+                                logging.warning("Overwriting url %s " % url)
                             url = files["streamUri"]
                         if files["mime"] == "video/x-brightcove":
                             bc.write(url+"\n")
-                        elif isYoutubeLink(url):
+                        elif self.isYoutubeLink(url):
                             youtube.write(url+"\n")
                         else:
                             other.write(url+"\n")
